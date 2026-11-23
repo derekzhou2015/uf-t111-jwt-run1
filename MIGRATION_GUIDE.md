@@ -15,6 +15,30 @@ intentionally changed and cleaned some of the public API, existing programs
 might need to be updated. The following sections describe significant changes
 and corresponding updates for existing programs.
 
+## Explicit `null` claims are now treated as "absent"
+
+An explicit JSON `null` on a registered claim (e.g. `{"exp":null}`) is now
+interpreted exactly like a claim that is not present, independently of whether
+the token is parsed into the dynamic `MapClaims` container or the structured
+`RegisteredClaims` container. Previously the two containers disagreed:
+`MapClaims` reported an `ErrInvalidType` for a null `exp`/`nbf`/`iat`/`iss`/
+`sub`, while `RegisteredClaims` treated the same token as having no such claim
+(which, for `exp`, meant the token never expired).
+
+After this change both containers behave the same:
+
+* a null on an optional claim validates as if the claim were absent;
+* a null where the claim is required or expected (e.g.
+  `WithExpirationRequired`, `WithIssuer`) fails with
+  `ErrTokenRequiredClaimMissing` instead of `ErrInvalidType`;
+* non-null values of the wrong type and genuinely expired tokens are still
+  rejected.
+
+Code that specifically matched `ErrInvalidType` for a null map claim should
+match `ErrTokenRequiredClaimMissing` (or both) instead. See
+[NULL_CLAIMS_SEMANTICS.md](./NULL_CLAIMS_SEMANTICS.md) for the full rationale.
+
+
 ## Parsing and Validation Options
 
 Under the hood, a new `Validator` struct takes care of validating the claims. A

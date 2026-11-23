@@ -181,6 +181,17 @@ func TestMapClaims_parseString(t *testing.T) {
 			want:    "mystring",
 			wantErr: false,
 		},
+		{
+			// An explicit null means "no value", identical to an absent key,
+			// and must not be reported as an invalid type.
+			name: "explicit null",
+			m:    MapClaims{"mykey": nil},
+			args: args{
+				key: "mykey",
+			},
+			want:    "",
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -272,4 +283,102 @@ func TestMapClaims_GetAudience(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestMapClaims_NullNumericDateIsAbsent pins the converged null semantics for
+// the time claims. An explicit null on exp/nbf/iat must look exactly like an
+// absent key (nil *NumericDate, no error) rather than an ErrInvalidType, so the
+// dynamic map container matches the structured RegisteredClaims container.
+func TestMapClaims_NullNumericDateIsAbsent(t *testing.T) {
+	accessors := map[string]func(MapClaims) (*NumericDate, error){
+		"exp": MapClaims.GetExpirationTime,
+		"nbf": MapClaims.GetNotBefore,
+		"iat": MapClaims.GetIssuedAt,
+	}
+	for key, get := range accessors {
+		t.Run(key+" null", func(t *testing.T) {
+			got, err := get(MapClaims{key: nil})
+			if err != nil {
+				t.Fatalf("expected no error for null %s, got %v", key, err)
+			}
+			if got != nil {
+				t.Fatalf("expected nil *NumericDate for null %s, got %v", key, got)
+			}
+		})
+
+		t.Run(key+" absent", func(t *testing.T) {
+			gotNull, errNull := get(MapClaims{key: nil})
+			gotAbsent, errAbsent := get(MapClaims{})
+			if (errNull == nil) != (errAbsent == nil) || gotNull != gotAbsent {
+				t.Fatalf("null and absent must be equivalent: null=(%v,%v) absent=(%v,%v)",
+					gotNull, errNull, gotAbsent, errAbsent)
+			}
+		})
+	}
+
+	// A non-null, non-numeric value must remain a hard type error; null must
+	// not weaken the existing malformed-claim rejection.
+	if _, err := (MapClaims{"exp": "soon"}).GetExpirationTime(); !errors.Is(err, ErrInvalidType) {
+		t.Fatalf("expected ErrInvalidType for string exp, got %v", err)
+	}
+}
+
+// TestMapClaims_NullStringIsAbsent covers the iss/sub string accessors. A null
+// issuer/subject must be indistinguishable from an absent one (empty string, no
+// error), matching the zero value left by decoding null into a struct string.
+func TestMapClaims_NullStringIsAbsent(t *testing.T) {
+	accessors := map[string]func(MapClaims) (string, error){
+		"iss": MapClaims.GetIssuer,
+		"sub": MapClaims.GetSubject,
+	}
+	for key, get := range accessors {
+		t.Run(key+" null", func(t *testing.T) {
+			got, err := get(MapClaims{key: nil})
+			if err != nil {
+				t.Fatalf("expected no error for null %s, got %v", key, err)
+			}
+			if got != "" {
+				t.Fatalf("expected empty string for null %s, got %q", key, got)
+			}
+		})
+
+		t.Run(key+" wrong type still errors", func(t *testing.T) {
+			if _, err := get(MapClaims{key: 42}); !errors.Is(err, ErrInvalidType) {
+				t.Fatalf("expected ErrInvalidType for numeric %s, got %v", key, err)
+			}
+		})
+	}
+}
+
+// TestMapClaims_NullValidationParity verifies through the public Validator
+// entry point that null claims validate like absent ones, while required or
+// expected claims surface ErrTokenRequiredClaimMissing rather than a type
+// error. This is the map-container side of the cross-container parity covered
+// end to end in null_semantics_test.go.
+func TestMapClaims_NullValidationParity(t *testing.T) {
+	t.Run("null exp optional is valid", func(t *testing.T) {
+		if err := NewValidator().Validate(MapClaims{"exp": nil}); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+	})
+
+	t.Run("null exp required is missing, not invalid type", func(t *testing.T) {
+		err := NewValidator(WithExpirationRequired()).Validate(MapClaims{"exp": nil})
+		if !errors.Is(err, ErrTokenRequiredClaimMissing) {
+			t.Fatalf("expected ErrTokenRequiredClaimMissing, got %v", err)
+		}
+	})
+
+	t.Run("null issuer expected is missing", func(t *testing.T) {
+		err := NewValidator(WithIssuer("me")).Validate(MapClaims{"iss": nil})
+		if !errors.Is(err, ErrTokenRequiredClaimMissing) {
+			t.Fatalf("expected ErrTokenRequiredClaimMissing, got %v", err)
+		}
+	})
+
+	t.Run("null iat with verification is valid", func(t *testing.T) {
+		if err := NewValidator(WithIssuedAt()).Validate(MapClaims{"iat": nil}); err != nil {
+			t.Fatalf("expected nil error, got %v", err)
+		}
+	})
 }

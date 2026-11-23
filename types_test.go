@@ -128,6 +128,60 @@ func TestNumericDate_MarshalJSON(t *testing.T) {
 	}
 }
 
+// TestNumericDate_NullIsNoValue pins the converged null semantics at the
+// decoding layer. An explicit JSON null must not be a decode error and must
+// leave the value untouched, so a null time claim is read as "no value" rather
+// than as the UNIX epoch or a malformed token. This is what makes a null
+// exp/nbf/iat decode identically across value-typed and pointer-typed fields.
+func TestNumericDate_NullIsNoValue(t *testing.T) {
+	t.Run("value-typed field keeps zero value on null", func(t *testing.T) {
+		var s struct {
+			Exp jwt.NumericDate `json:"exp"`
+		}
+		if err := json.Unmarshal([]byte(`{"exp":null}`), &s); err != nil {
+			t.Fatalf("unexpected error decoding null exp: %v", err)
+		}
+		if !s.Exp.Time.IsZero() {
+			t.Fatalf("expected zero NumericDate after null, got %v", s.Exp.Time)
+		}
+	})
+
+	t.Run("pointer field becomes nil on null", func(t *testing.T) {
+		var s struct {
+			Exp *jwt.NumericDate `json:"exp"`
+		}
+		// Pre-populate to prove decoding null clears it rather than skipping.
+		s.Exp = jwt.NewNumericDate(time.Unix(1516239022, 0))
+		if err := json.Unmarshal([]byte(`{"exp":null}`), &s); err != nil {
+			t.Fatalf("unexpected error decoding null exp: %v", err)
+		}
+		if s.Exp != nil {
+			t.Fatalf("expected nil *NumericDate after null, got %v", s.Exp)
+		}
+	})
+
+	t.Run("numeric value still decodes after null handling", func(t *testing.T) {
+		var s struct {
+			Exp jwt.NumericDate `json:"exp"`
+		}
+		if err := json.Unmarshal([]byte(`{"exp":1516239022}`), &s); err != nil {
+			t.Fatalf("unexpected error decoding numeric exp: %v", err)
+		}
+		if got := s.Exp.Unix(); got != 1516239022 {
+			t.Fatalf("expected 1516239022, got %d", got)
+		}
+	})
+
+	t.Run("non-numeric non-null value still errors", func(t *testing.T) {
+		var s struct {
+			Exp jwt.NumericDate `json:"exp"`
+		}
+		if err := json.Unmarshal([]byte(`{"exp":"soon"}`), &s); err == nil {
+			t.Fatal("expected a decode error for a string exp, got nil")
+		}
+	})
+}
+
 func TestGetSignatureAfterSigning(t *testing.T) {
 	token := jwt.New(jwt.SigningMethodHS256, nil)
 	signedString, err := token.SignedString([]byte("test12345"))

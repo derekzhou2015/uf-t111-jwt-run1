@@ -42,9 +42,15 @@ func (m MapClaims) GetSubject() (string, error) {
 // parseNumericDate tries to parse a key in the map claims type as a number
 // date. This will succeed, if the underlying type is either a [float64] or a
 // [json.Number]. Otherwise, nil will be returned.
+//
+// An absent key or an explicit JSON null both mean the claim carries no value
+// and yield a nil *NumericDate without an error. This mirrors how a null
+// numeric-date claim decodes into [RegisteredClaims] (a nil *NumericDate) and
+// keeps validation outcomes independent of the claims container. Any other
+// non-numeric type is still reported as [ErrInvalidType].
 func (m MapClaims) parseNumericDate(key string) (*NumericDate, error) {
 	v, ok := m[key]
-	if !ok {
+	if !ok || v == nil {
 		return nil, nil
 	}
 
@@ -78,8 +84,11 @@ func (m MapClaims) parseClaimsString(key string) (ClaimStrings, error) {
 			cs = append(cs, vs)
 		}
 	case nil:
-		// The claim is either absent or explicitly null. As the claim is
-		// optional, this is not an error and means "no value".
+		// An absent key (the zero value of a map lookup) or an explicit null
+		// both carry no audience. The claim is optional, so this is not an
+		// error and means "no value", matching the nil slice a null leaves
+		// behind when decoding into the ClaimStrings field of
+		// [RegisteredClaims].
 		return nil, nil
 	default:
 		// Any other type (e.g. a number, boolean or object) is invalid, which
@@ -93,8 +102,11 @@ func (m MapClaims) parseClaimsString(key string) (ClaimStrings, error) {
 }
 
 // parseString tries to parse a key in the map claims type as a [string] type.
-// If the key does not exist, an empty string is returned. If the key has the
-// wrong type, an error is returned.
+// If the key does not exist or is explicitly null, an empty string is
+// returned: a null carries no value and is treated as "claim absent", matching
+// the zero value a null leaves behind when decoding into a string field of a
+// struct claims type such as [RegisteredClaims]. If the key has any other
+// non-string type, an error is returned.
 func (m MapClaims) parseString(key string) (string, error) {
 	var (
 		ok  bool
@@ -102,7 +114,7 @@ func (m MapClaims) parseString(key string) (string, error) {
 		iss string
 	)
 	raw, ok = m[key]
-	if !ok {
+	if !ok || raw == nil {
 		return "", nil
 	}
 

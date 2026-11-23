@@ -77,11 +77,25 @@ func (date NumericDate) MarshalJSON() (b []byte, err error) {
 // deserializes a [NumericDate] from a JSON representation, i.e. a
 // [json.Number]. This number represents an UNIX epoch with either integer or
 // non-integer seconds.
+//
+// An explicit JSON null is treated as "no value" and leaves the NumericDate
+// untouched (its zero value) without an error. This keeps the decoding of a
+// null claim consistent across claim containers: a *NumericDate field (as used
+// by [RegisteredClaims]) is set to nil by encoding/json, while a value-typed
+// NumericDate simply keeps its zero value, and [MapClaims] exposes the same
+// claim as a nil *NumericDate. A null therefore means "claim absent", never an
+// expiration or other instant in time.
 func (date *NumericDate) UnmarshalJSON(b []byte) (err error) {
 	var (
 		number json.Number
 		f      float64
 	)
+
+	// An explicit null carries no value; mirror encoding/json's behavior of
+	// leaving the destination unchanged instead of reporting a type error.
+	if string(b) == "null" {
+		return nil
+	}
 
 	if err = json.Unmarshal(b, &number); err != nil {
 		return fmt.Errorf("could not parse NumericData: %w", err)
